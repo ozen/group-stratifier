@@ -1,4 +1,5 @@
 import numbers
+import warnings
 
 import numpy as np
 from pyeasyga import pyeasyga
@@ -87,7 +88,11 @@ class GroupStratifiedKFold:
                 fold_mask = (individual == i)
                 fold_class_counts[i] = np.sum(group_class_counts, axis=0, where=fold_mask[:,None])
 
-            spread = ((fold_class_counts.max(0) - fold_class_counts.min(0)) / fold_class_counts.sum(0)).mean()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                spread = (fold_class_counts.max(0) - fold_class_counts.min(0)) / fold_class_counts.sum(0)
+                spread = np.nanmean(spread)
+
             return spread
 
         def create_individual(data):
