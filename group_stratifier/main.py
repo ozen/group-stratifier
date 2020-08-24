@@ -53,7 +53,13 @@ class GroupStratifiedKFold:
         self.crossover_ratio = crossover_ratio
 
     def split(self, labels, groups):
-        n_samples = len(labels)
+        labels = np.array(labels)
+        assert labels.ndim == 1 or labels.ndim == 2
+        if labels.ndim == 1:
+            labels = np.expand_dims(labels, 0)
+
+        n_samples = labels.shape[-1]
+        n_label_types = labels.shape[0]
 
         if self.n_splits > n_samples:
             raise ValueError(
@@ -64,16 +70,18 @@ class GroupStratifiedKFold:
         rng = check_random_state(self.random_state)
 
         n_splits = self.n_splits
-        n_classes = np.max(labels) + 1
         n_groups = np.max(groups) + 1
+        n_classes = np.max(labels, axis=-1) + 1
 
-        group_class_counts = np.zeros((n_groups, n_classes), dtype=np.int32)
+        group_class_counts = []
+        for label_type_idx in range(n_label_types):
+            group_class_counts.append(np.zeros((n_groups, n_classes[label_type_idx]), dtype=np.int32))
 
-        for i in range(n_samples):
-            group_class_counts[groups[i], labels[i]] += 1
+            for sample_idx in range(n_samples):
+                group_class_counts[-1][groups[sample_idx], labels[label_type_idx][sample_idx]] += 1
 
         ga = pyeasyga.GeneticAlgorithm(
-            seed_data=group_class_counts,
+            seed_data=[],
             population_size=self.population_size,
             generations=self.generations,
             maximise_fitness=False,
@@ -82,18 +90,24 @@ class GroupStratifiedKFold:
         )
 
         def fitness_function(individual, data):
-            fold_class_counts = np.zeros((n_splits, n_classes), dtype=np.int32)
+            spreads = []
 
-            for i in range(n_splits):
-                fold_mask = (individual == i)
-                fold_class_counts[i] = np.sum(group_class_counts, axis=0, where=fold_mask[:,None])
+            for label_type_idx in range(n_label_types):
+                fold_class_counts = np.zeros((n_splits, n_classes[label_type_idx]), dtype=np.int32)
 
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                spread = (fold_class_counts.max(0) - fold_class_counts.min(0)) / fold_class_counts.sum(0)
-                spread = np.nanmean(spread)
+                for split_idx in range(n_splits):
+                    fold_mask = (individual == split_idx)
+                    fold_class_counts[split_idx] = np.sum(group_class_counts[label_type_idx],
+                                                          axis=0, where=fold_mask[:,None])
 
-            return spread
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    spread = (fold_class_counts.max(0) - fold_class_counts.min(0)) / fold_class_counts.sum(0)
+                    spread = np.nanmean(spread)
+
+                spreads.append(spread)
+
+            return np.mean(spreads)
 
         def create_individual(data):
             return rng.randint(0, self.n_splits, n_groups)
